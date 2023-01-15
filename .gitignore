@@ -1,0 +1,13 @@
+# Visual Studio/MS Build project files and directories
+*.vcxproj.user
+packages
+.vs
+
+# compiled build output file and directories
+x64
+*.obj
+*.aps
+*.lib
+*.dll
+*.exe
+*.winmd

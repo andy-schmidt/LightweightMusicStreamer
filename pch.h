@@ -1,0 +1,9 @@
+﻿#pragma once
+#include <format>
+#include <functional>
+#include <utility>
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.Media.Core.h>
+#include <winrt/Windows.Media.Playback.h>
+#include <Windows.h>
