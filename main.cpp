@@ -1,6 +1,13 @@
 ﻿#include "pch.h"
 #include "resource.h"
 
+#include <array>
+#include <exception>
+#include <format>
+#include <string>
+#include <string_view>
+
+using namespace std::string_view_literals;
 using namespace winrt;
 using namespace Windows::Foundation;
 
@@ -44,10 +51,24 @@ void ExceptionMessageBox(HWND hDlg, const wchar_t* title)
     MessageBox(hDlg, errorMessage.c_str(), title, MB_ICONERROR | MB_ICONERROR);
 }
 
+struct StreamingSource
+{
+    const wchar_t* m_caption;
+    const std::wstring_view m_uri;
+};
+
+const std::array g_musicSources = 
+{
+    StreamingSource{ L"Deepinradio", L"http://s3.viastreaming.net:8525"sv },
+    StreamingSource{ L"KCSM", L"http://ice5.securenetsystems.net/KCSM"sv },
+    StreamingSource{ L"KZSC", L"https://kzscfms1-geckohost.radioca.st/kzschigh?type=.mp3"sv },
+    StreamingSource{ L"KALX", L"http://stream.kalx.berkeley.edu:8000/kalx-320.aac"sv }
+};
+
 struct StreamingPlayerDialog
 {
-    static constexpr auto g_deepinradio{ L"http://s3.viastreaming.net:8525" };
-    static constexpr auto g_KCSM{ L"http://ice5.securenetsystems.net/KCSM" };
+    static constexpr auto g_playGlyph{ L"\x23f5" };
+    static constexpr auto g_stopGlyph{ L"\x23f9" };
 
     enum class State
     {
@@ -55,14 +76,19 @@ struct StreamingPlayerDialog
         Stopped
     };
     State m_state{ State::Stopped };
+
     IAsyncInfo m_async{ nullptr };
     Windows::Media::Playback::MediaPlayer m_mediaPlayer{ nullptr };
+    HWND m_hDlg{ nullptr };
 
     static INT_PTR CALLBACK DialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
 
     INT_PTR Run(HINSTANCE hInstance);
-    void OpenAndPlayStreamingSource(HWND hDlg);
-    void OnActionClick(HWND hDlg);
+    void OnInitialize();
+    void OnActionClick();
+    void OnSourceChange();
+    void OpenAndPlayStreamingSource();
+    const StreamingSource& GetSource() const;
     ~StreamingPlayerDialog();
 };
 
@@ -74,14 +100,29 @@ StreamingPlayerDialog::~StreamingPlayerDialog()
     }
 }
 
-void StreamingPlayerDialog::OpenAndPlayStreamingSource(HWND hDlg)
+void StreamingPlayerDialog::OnInitialize()
 {
-    Uri uri{ g_deepinradio };
+    const auto comboHwnd{ GetDlgItem(m_hDlg, IDC_SOURCE) };
+    for (const auto& source : g_musicSources)
+    {
+        const auto index{ SendMessage(comboHwnd, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(source.m_caption)) };
+        if (index == CB_ERR || index == CB_ERRSPACE)
+        {
+            throw_last_error();
+        }
+        check_bool(SendMessage(comboHwnd, CB_SETITEMDATA, index, reinterpret_cast<LPARAM>(&source)) != CB_ERR);
+    }
+    SendMessage(comboHwnd, CB_SETCURSEL, 0, 0);
+}
+
+void StreamingPlayerDialog::OpenAndPlayStreamingSource()
+{
+    Uri uri{ GetSource().m_uri };
     auto streamingSource{ Windows::Media::Core::MediaSource::CreateFromUri(std::move(uri)) };
     m_mediaPlayer = Windows::Media::Playback::MediaPlayer{};
 
     auto async = streamingSource.OpenAsync();
-    async.Completed([hDlg, player = m_mediaPlayer, source = std::move(streamingSource)](const IAsyncAction& async, const AsyncStatus status)
+    async.Completed([hDlg = m_hDlg, player = m_mediaPlayer, source = std::move(streamingSource)](const IAsyncAction& async, const AsyncStatus status)
     {
         // We have to be careful about we do in this completion delegate. It usually runs on a background thread which
         // can lead to race conditions with the UI. Windows::Media::Playback::MediaPlayer and Windows::Media::Core::MediaSource
@@ -94,6 +135,7 @@ void StreamingPlayerDialog::OpenAndPlayStreamingSource(HWND hDlg)
                 player.Source(source);
                 player.Play();
                 break;
+
             case AsyncStatus::Error:
                 throw_hresult(async.ErrorCode());
                 break;
@@ -108,13 +150,29 @@ void StreamingPlayerDialog::OpenAndPlayStreamingSource(HWND hDlg)
     m_async = async;
 }
 
-void StreamingPlayerDialog::OnActionClick(HWND hDlg)
+const StreamingSource& StreamingPlayerDialog::GetSource() const
 {
+    const auto comboHwnd{ GetDlgItem(m_hDlg, IDC_SOURCE) };
+
+    const auto selectedIndex{ SendMessage(comboHwnd, CB_GETCURSEL, 0 , 0) };
+    check_bool(selectedIndex != CB_ERR);
+
+    const auto source{ SendMessage(comboHwnd, CB_GETITEMDATA, selectedIndex, 0) };
+    check_bool(source != CB_ERR);
+
+    return *reinterpret_cast<StreamingSource*>(source);
+}
+
+void StreamingPlayerDialog::OnActionClick()
+{
+    const auto comboHwnd{ GetDlgItem(m_hDlg, IDC_SOURCE) };
+
     switch (m_state)
     {
     case State::Stopped:
-        OpenAndPlayStreamingSource(hDlg);
-        SetDlgItemText(hDlg, IDACTION, L"Stop");
+        OpenAndPlayStreamingSource();
+        SetDlgItemText(m_hDlg, IDACTION, g_stopGlyph);
+        EnableWindow(comboHwnd, FALSE);
         m_state = State::Playing;
         break;
 
@@ -124,21 +182,31 @@ void StreamingPlayerDialog::OnActionClick(HWND hDlg)
         case AsyncStatus::Completed:
             m_mediaPlayer.Pause();
             break;
+
         default:
             m_async.Cancel();
             break;
         }
+
         m_mediaPlayer = nullptr;
         m_async = nullptr;
-        SetDlgItemText(hDlg, IDACTION, L"Play");
+        SetDlgItemText(m_hDlg, IDACTION, g_playGlyph);
+        EnableWindow(comboHwnd, TRUE);
         m_state = State::Stopped;
+        break;
     }
+}
+
+void StreamingPlayerDialog::OnSourceChange()
+{
+    const auto source{ GetSource() };
+    SetWindowText(m_hDlg, source.m_caption);
 }
 
 INT_PTR StreamingPlayerDialog::DialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
-    auto window{ reinterpret_cast<StreamingPlayerDialog*>(GetWindowLongPtr(hDlg, DWLP_USER)) };
-    if (window == nullptr && message != WM_INITDIALOG)
+    auto dialog{ reinterpret_cast<StreamingPlayerDialog*>(GetWindowLongPtr(hDlg, DWLP_USER)) };
+    if (dialog == nullptr && message != WM_INITDIALOG)
     {
         return FALSE;
     }
@@ -147,6 +215,9 @@ INT_PTR StreamingPlayerDialog::DialogProc(HWND hDlg, UINT message, WPARAM wParam
     {
     case WM_INITDIALOG:
         SetWindowLongPtr(hDlg, DWLP_USER, lParam);
+        dialog = reinterpret_cast<StreamingPlayerDialog*>(lParam);
+        dialog->m_hDlg = hDlg;
+        dialog->OnInitialize();
         return TRUE;
         break;
 
@@ -157,9 +228,18 @@ INT_PTR StreamingPlayerDialog::DialogProc(HWND hDlg, UINT message, WPARAM wParam
             EndDialog(hDlg, LOWORD(wParam));
             return TRUE;
             break;
+
         case IDACTION:
-            window->OnActionClick(hDlg);
+            dialog->OnActionClick();
             return TRUE;
+            break;
+
+        case IDC_SOURCE:
+            if (HIWORD(wParam) == CBN_SELCHANGE)
+            {
+                dialog->OnSourceChange();
+                return TRUE;
+            }
             break;
         }
         break;

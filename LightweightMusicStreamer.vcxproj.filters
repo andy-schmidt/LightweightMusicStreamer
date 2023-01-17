@@ -42,4 +42,7 @@
       <Filter>Resource Files</Filter>
     </ResourceCompile>
   </ItemGroup>
+  <ItemGroup>
+    <Manifest Include="application.manifest" />
+  </ItemGroup>
 </Project>
