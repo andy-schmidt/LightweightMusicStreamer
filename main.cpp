@@ -57,7 +57,7 @@ struct StreamingSource
     const std::wstring_view m_uri;
 };
 
-const std::array g_musicSources = 
+constexpr std::array g_musicSources
 {
     StreamingSource{ L"Deepinradio", L"http://s3.viastreaming.net:8525"sv },
     StreamingSource{ L"KCSM", L"http://ice5.securenetsystems.net/KCSM"sv },
@@ -112,7 +112,11 @@ void StreamingPlayerDialog::OnInitialize()
         }
         check_bool(SendMessage(comboHwnd, CB_SETITEMDATA, index, reinterpret_cast<LPARAM>(&source)) != CB_ERR);
     }
-    SendMessage(comboHwnd, CB_SETCURSEL, 0, 0);
+
+    if constexpr (g_musicSources.size() > 0)
+    {
+        SendMessage(comboHwnd, CB_SETCURSEL, 0, 0);
+    }
 }
 
 void StreamingPlayerDialog::OpenAndPlayStreamingSource()
@@ -120,6 +124,7 @@ void StreamingPlayerDialog::OpenAndPlayStreamingSource()
     Uri uri{ GetSource().m_uri };
     auto streamingSource{ Windows::Media::Core::MediaSource::CreateFromUri(std::move(uri)) };
     m_mediaPlayer = Windows::Media::Playback::MediaPlayer{};
+    m_mediaPlayer.CommandManager().IsEnabled(false);
 
     auto async = streamingSource.OpenAsync();
     async.Completed([hDlg = m_hDlg, player = m_mediaPlayer, source = std::move(streamingSource)](const IAsyncAction& async, const AsyncStatus status)
